@@ -39,7 +39,6 @@ void pna_cleanup(void);
 
 typedef unsigned long pna_stat_uword;
 
-// not all systems define all IP protocols
 #ifndef IPPROTO_OSPFIGP
 # define IPPROTO_OSPFIGP 89
 #endif
@@ -47,6 +46,20 @@ typedef unsigned long pna_stat_uword;
 #ifndef IPPROTO_IGRP
 # define IPPROTO_IGRP 88
 #endif
+
+#ifndef ETHERTYPE_GOOSE_61850
+# define ETHERTYPE_GOOSE_61850 0x88b8
+#endif
+
+#ifndef ETHERTYPE_GSE_61850
+# define ETHERTYPE_GSE_61850 0x88b9
+#endif
+
+#ifndef ETHERTYPE_SV_61850
+# define ETHERTYPE_SV_61850 0x88ba
+#endif
+
+
 
 // not all hosts have sctp structs, make a simple one for our needs
 struct pna_sctpcommonhdr {
@@ -69,9 +82,15 @@ struct pna_grehdr {
 	unsigned short protocol;
 };
 
+// IEC61850
+struct pna_iec61850hdr {
+	unsigned short appid;
+};
+
 #define eth_hdr(pkt) (struct ether_header *)(pkt)
 #define ip_hdr(pkt) (struct ip *)(pkt)
 #define gre_hdr(pkt) (struct pna_grehdr *)(pkt)
+#define iec61850_hdr(pkt) (struct pna_iec61850hdr *)(pkt)
 #define tcp_hdr(pkt) (struct tcphdr *)(pkt)
 #define udp_hdr(pkt) (struct udphdr *)(pkt)
 #define sctp_hdr(pkt) (struct pna_sctpcommonhdr *)(pkt)
@@ -319,6 +338,7 @@ int ether_hook(
 	unsigned int pad;
 	struct ip *iphdr;
 	struct pna_grehdr *grehdr;
+	struct pna_iec61850hdr *iec61850hdr;
 
 	switch (key->l3_protocol) {
 	case ETHERTYPE_IP:
@@ -364,6 +384,23 @@ int ether_hook(
 		if (ret != 0) {
 			return pna_done(pkt);
 		}
+		break;
+	case ETHERTYPE_GOOSE_61850:
+	case ETHERTYPE_GSE_61850:
+	case ETHERTYPE_SV_61850:
+		iec61850hdr = iec61850_hdr(pkt);
+		pkt = pkt + sizeof(struct pna_iec61850hdr);
+		pkt_remains -= sizeof(struct pna_iec61850hdr);
+
+		// Save the layer 3 details
+		key->local_ip = ntohl(iphdr->ip_src.s_addr);
+		key->remote_ip = ntohl(iphdr->ip_dst.s_addr);
+		key->l4_protocol = iec61850hdr->appid;
+
+		// Save the "layer 4" details
+		key->local_port = 0;
+		key->remote_port = 0;
+
 		break;
 	default:
 		return pna_done(pkt);
